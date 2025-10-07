@@ -1,3 +1,4 @@
+```python
 import httpx
 import logging
 from fastapi import FastAPI, HTTPException
@@ -12,7 +13,7 @@ API_SERVERS = [
 
 current_server_index = 0
 fail_counter = 0
-MAX_FAILS = 3
+MAX_FAILS = 2
 
 TELEGRAM_BOT_TOKEN = "7652042264:AAGc6DQ-OkJ8PaBKJnc_NkcCseIwmfbHD-c"
 TELEGRAM_CHAT_ID = "5029478739"
@@ -67,14 +68,22 @@ async def scrape_user(username: str):
             async with httpx.AsyncClient(timeout=10.0) as client:
                 res = await client.get(url)
 
+            # ✅ If working response
             if res.status_code == 200:
                 fail_counter = 0
                 return res.json()
 
-            logger.warning(f"⚠️ Failed from {server}: {res.status_code}")
-            fail_counter += 1
-            if fail_counter >= MAX_FAILS:
-                await switch_server()
+            # ⚠️ If Instagram says user not found (404) → don't switch
+            elif res.status_code == 404:
+                fail_counter = 0
+                return {"error": "User not found", "from": server}
+
+            # ❌ Any other response = API issue
+            else:
+                logger.warning(f"⚠️ Failed from {server}: {res.status_code}")
+                fail_counter += 1
+                if fail_counter >= MAX_FAILS:
+                    await switch_server()
 
         except Exception as e:
             logger.warning(f"❌ Error from {server}: {e}")
@@ -87,3 +96,4 @@ async def scrape_user(username: str):
 @app.get("/health")
 async def health():
     return {"status": "ok", "current_server": get_current_server()}
+```
