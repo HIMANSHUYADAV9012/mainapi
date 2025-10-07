@@ -1,7 +1,9 @@
+```python
 import httpx
 import logging
-from fastapi import FastAPI, HTTPException
+from fastapi import FastAPI, HTTPException, Query
 from fastapi.middleware.cors import CORSMiddleware
+from fastapi.responses import Response
 
 # ------------------- Config -------------------
 API_SERVERS = [
@@ -67,14 +69,22 @@ async def scrape_user(username: str):
             async with httpx.AsyncClient(timeout=10.0) as client:
                 res = await client.get(url)
 
+            # ✅ If working response
             if res.status_code == 200:
                 fail_counter = 0
                 return res.json()
 
-            logger.warning(f"⚠️ Failed from {server}: {res.status_code}")
-            fail_counter += 1
-            if fail_counter >= MAX_FAILS:
-                await switch_server()
+            # ⚠️ If Instagram says user not found (404) → don't switch
+            elif res.status_code == 404:
+                fail_counter = 0
+                return {"error": "User not found", "from": server}
+
+            # ❌ Any other response = API issue
+            else:
+                logger.warning(f"⚠️ Failed from {server}: {res.status_code}")
+                fail_counter += 1
+                if fail_counter >= MAX_FAILS:
+                    await switch_server()
 
         except Exception as e:
             logger.warning(f"❌ Error from {server}: {e}")
@@ -84,6 +94,27 @@ async def scrape_user(username: str):
 
     raise HTTPException(status_code=502, detail="All servers failed")
 
+# ------------------- Image Proxy Route -------------------
+@app.get("/image-proxy")
+async def image_proxy(url: str = Query(...)):
+    server = get_current_server()
+    proxy_url = f"{server}/image-proxy?url={url}"
+
+    try:
+        async with httpx.AsyncClient(timeout=10.0) as client:
+            res = await client.get(proxy_url)
+
+        if res.status_code == 200:
+            content_type = res.headers.get("content-type", "image/jpeg")
+            return Response(content=res.content, media_type=content_type)
+        else:
+            raise HTTPException(status_code=res.status_code, detail="Image fetch failed")
+    except Exception as e:
+        logger.error(f"Image proxy error from {server}: {e}")
+        raise HTTPException(status_code=500, detail="Image proxy error")
+
+# ------------------- Health Route -------------------
 @app.get("/health")
 async def health():
     return {"status": "ok", "current_server": get_current_server()}
+```
