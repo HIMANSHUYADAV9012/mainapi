@@ -1,4 +1,4 @@
-```python
+
 import httpx
 import logging
 from fastapi import FastAPI, HTTPException, Query
@@ -117,4 +117,4 @@ async def image_proxy(url: str = Query(...)):
 @app.get("/health")
 async def health():
     return {"status": "ok", "current_server": get_current_server()}
-```
+
