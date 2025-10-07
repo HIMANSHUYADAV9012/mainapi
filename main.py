@@ -1,4 +1,3 @@
-
 import httpx
 import logging
 from fastapi import FastAPI, HTTPException
@@ -68,22 +67,14 @@ async def scrape_user(username: str):
             async with httpx.AsyncClient(timeout=10.0) as client:
                 res = await client.get(url)
 
-            # ✅ If working response
             if res.status_code == 200:
                 fail_counter = 0
                 return res.json()
 
-            # ⚠️ If Instagram says user not found (404) → don't switch
-            elif res.status_code == 404:
-                fail_counter = 0
-                return {"error": "User not found", "from": server}
-
-            # ❌ Any other response = API issue
-            else:
-                logger.warning(f"⚠️ Failed from {server}: {res.status_code}")
-                fail_counter += 1
-                if fail_counter >= MAX_FAILS:
-                    await switch_server()
+            logger.warning(f"⚠️ Failed from {server}: {res.status_code}")
+            fail_counter += 1
+            if fail_counter >= MAX_FAILS:
+                await switch_server()
 
         except Exception as e:
             logger.warning(f"❌ Error from {server}: {e}")
