@@ -1,4 +1,4 @@
-```python
+
 import httpx
 import logging
 from fastapi import FastAPI, HTTPException
@@ -13,7 +13,7 @@ API_SERVERS = [
 
 current_server_index = 0
 fail_counter = 0
-MAX_FAILS = 2
+MAX_FAILS = 3
 
 TELEGRAM_BOT_TOKEN = "7652042264:AAGc6DQ-OkJ8PaBKJnc_NkcCseIwmfbHD-c"
 TELEGRAM_CHAT_ID = "5029478739"
@@ -96,4 +96,3 @@ async def scrape_user(username: str):
 @app.get("/health")
 async def health():
     return {"status": "ok", "current_server": get_current_server()}
-```
