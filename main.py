@@ -1,120 +1,126 @@
-
 import httpx
-import logging
-from fastapi import FastAPI, HTTPException, Query
+import asyncio
+import time
+from fastapi import FastAPI, HTTPException
 from fastapi.middleware.cors import CORSMiddleware
-from fastapi.responses import Response
+from fastapi.responses import JSONResponse
+import logging
 
-# ------------------- Config -------------------
-API_SERVERS = [
-    "https://without-proxy.vercel.app",
-    "https://without-proxy1.vercel.app",
-    "https://without-proxy2.vercel.app",
+# ================= CONFIG =================
+SCRAPER_APIS = [
+    "https://without-proxy.vercel.app",   # Primary
+    "https://without-proxy1.vercel.app",  # Secondary
+    "https://without-proxy2.vercel.app"   # Tertiary
 ]
 
-current_server_index = 0
-fail_counter = 0
-MAX_FAILS = 3
+CURRENT_PRIMARY_INDEX = 0
 
-TELEGRAM_BOT_TOKEN = "7652042264:AAGc6DQ-OkJ8PaBKJnc_NkcCseIwmfbHD-c"
-TELEGRAM_CHAT_ID = "5029478739"
+# Telegram Bot config
+TELEGRAM_BOT_TOKEN = "YOUR_TELEGRAM_BOT_TOKEN"
+TELEGRAM_CHAT_ID = "YOUR_CHAT_ID"
 
-logging.basicConfig(level=logging.INFO)
-logger = logging.getLogger("main-api")
+# Stats / Alerts
+STATS = {
+    "last_alerts": []
+}
 
-# ------------------- FastAPI Setup -------------------
-app = FastAPI()
+# ================= APP INIT =================
+app = FastAPI(title="Master Instagram Scraper API")
+
 app.add_middleware(
     CORSMiddleware,
     allow_origins=["*"],
+    allow_credentials=True,
     allow_methods=["GET"],
     allow_headers=["*"],
 )
 
-# ------------------- Telegram Notify -------------------
+# Logging
+logging.basicConfig(level=logging.INFO)
+logger = logging.getLogger("master-api")
+
+# ================= UTILS =================
+def get_api_order():
+    global CURRENT_PRIMARY_INDEX
+    n = len(SCRAPER_APIS)
+    return [SCRAPER_APIS[(CURRENT_PRIMARY_INDEX + i) % n] for i in range(n)]
+
 async def notify_telegram(message: str):
-    try:
-        url = f"https://api.telegram.org/bot{TELEGRAM_BOT_TOKEN}/sendMessage"
-        payload = {"chat_id": TELEGRAM_CHAT_ID, "text": message}
-        async with httpx.AsyncClient() as client:
-            await client.post(url, data=payload)
-    except Exception as e:
-        logger.error(f"Telegram notify failed: {e}")
-
-# ------------------- Helpers -------------------
-def get_current_server():
-    return API_SERVERS[current_server_index]
-
-async def switch_server():
-    global current_server_index, fail_counter
-    old_server = get_current_server()
-    current_server_index = (current_server_index + 1) % len(API_SERVERS)
-    new_server = get_current_server()
-    fail_counter = 0
-
-    msg = f"⚠️ API Switched\n🔁 From: {old_server}\n✅ To: {new_server}"
-    logger.warning(msg)
-    await notify_telegram(msg)
-
-# ------------------- Main Logic -------------------
-@app.get("/scrape/{username}")
-async def scrape_user(username: str):
-    global fail_counter
-
-    for attempt in range(len(API_SERVERS)):
-        server = get_current_server()
-        url = f"{server}/scrape/{username}"
-
-        try:
-            async with httpx.AsyncClient(timeout=10.0) as client:
-                res = await client.get(url)
-
-            # ✅ If working response
-            if res.status_code == 200:
-                fail_counter = 0
-                return res.json()
-
-            # ⚠️ If Instagram says user not found (404) → don't switch
-            elif res.status_code == 404:
-                fail_counter = 0
-                return {"error": "User not found", "from": server}
-
-            # ❌ Any other response = API issue
-            else:
-                logger.warning(f"⚠️ Failed from {server}: {res.status_code}")
-                fail_counter += 1
-                if fail_counter >= MAX_FAILS:
-                    await switch_server()
-
-        except Exception as e:
-            logger.warning(f"❌ Error from {server}: {e}")
-            fail_counter += 1
-            if fail_counter >= MAX_FAILS:
-                await switch_server()
-
-    raise HTTPException(status_code=502, detail="All servers failed")
-
-# ------------------- Image Proxy Route -------------------
-@app.get("/image-proxy")
-async def image_proxy(url: str = Query(...)):
-    server = get_current_server()
-    proxy_url = f"{server}/image-proxy?url={url}"
-
+    url = f"https://api.telegram.org/bot{TELEGRAM_BOT_TOKEN}/sendMessage"
+    payload = {"chat_id": TELEGRAM_CHAT_ID, "text": message}
     try:
         async with httpx.AsyncClient(timeout=10.0) as client:
-            res = await client.get(proxy_url)
-
-        if res.status_code == 200:
-            content_type = res.headers.get("content-type", "image/jpeg")
-            return Response(content=res.content, media_type=content_type)
-        else:
-            raise HTTPException(status_code=res.status_code, detail="Image fetch failed")
+            await client.post(url, data=payload)
+        STATS["last_alerts"].append({"time": time.time(), "msg": message})
+        STATS["last_alerts"] = STATS["last_alerts"][-10:]
     except Exception as e:
-        logger.error(f"Image proxy error from {server}: {e}")
-        raise HTTPException(status_code=500, detail="Image proxy error")
+        logger.error(f"Failed to send Telegram notification: {e}")
 
-# ------------------- Health Route -------------------
+def format_error_message(api_name: str, attempt: int, error: str, status_code: int = None):
+    base = f"❌ ERROR | API: {api_name} | Attempt: {attempt}"
+    if status_code:
+        return f"{base} | Status: {status_code} | {error}"
+    else:
+        return f"{base} | Exception: {error}"
+
+# ================= SCRAPE ENDPOINT =================
+@app.get("/scrape/{username}")
+async def scrape_master(username: str):
+    """
+    Master scraper with failover and smart primary rotation.
+    """
+    global CURRENT_PRIMARY_INDEX
+    apis_to_try = get_api_order()
+
+    for base_url in apis_to_try:
+        url = f"{base_url}/scrape/{username}"
+        try:
+            async with httpx.AsyncClient(timeout=10.0) as client:
+                resp = await client.get(url)
+
+            if resp.status_code == 200:
+                data = resp.json()
+                CURRENT_PRIMARY_INDEX = SCRAPER_APIS.index(base_url)
+                data["source_api"] = base_url
+                logger.info(f"✅ User {username} fetched via {base_url}")
+                return data
+
+            elif resp.status_code == 404:
+                message = f"⚠️ User not found: {username} on {base_url}"
+                logger.warning(message)
+                await notify_telegram(message)
+                raise HTTPException(status_code=404, detail="User not found")
+
+            else:
+                msg = format_error_message(base_url, 1, "Request failed", resp.status_code)
+                logger.warning(msg)
+                await notify_telegram(msg)
+
+        except httpx.RequestError as e:
+            msg = format_error_message(base_url, 1, str(e))
+            logger.warning(msg)
+            await notify_telegram(msg)
+            continue
+
+    raise HTTPException(status_code=502, detail="All scraper APIs failed")
+
+# ================= HEALTH CHECK =================
 @app.get("/health")
 async def health():
-    return {"status": "ok", "current_server": get_current_server()}
+    return {
+        "status": "ok",
+        "current_primary": SCRAPER_APIS[CURRENT_PRIMARY_INDEX],
+        "last_alerts": STATS["last_alerts"]
+    }
 
+@app.head("/health")
+async def health_head():
+    return JSONResponse(content=None, status_code=200)
+
+# ================= STATS =================
+@app.get("/stats")
+async def stats():
+    return {
+        "current_primary": SCRAPER_APIS[CURRENT_PRIMARY_INDEX],
+        "last_alerts": STATS["last_alerts"]
+    }
