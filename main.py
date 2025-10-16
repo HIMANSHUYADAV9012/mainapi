@@ -1,7 +1,7 @@
 import httpx
 import asyncio
 import time
-from fastapi import FastAPI, HTTPException
+from fastapi import FastAPI, HTTPException, Query
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import JSONResponse
 import logging
@@ -66,9 +66,6 @@ def format_error_message(api_name: str, attempt: int, error: str, status_code: i
 # ================= SCRAPE ENDPOINT =================
 @app.get("/scrape/{username}")
 async def scrape_master(username: str):
-    """
-    Master scraper with failover and smart primary rotation.
-    """
     global CURRENT_PRIMARY_INDEX
     apis_to_try = get_api_order()
 
@@ -103,6 +100,25 @@ async def scrape_master(username: str):
             continue
 
     raise HTTPException(status_code=502, detail="All scraper APIs failed")
+
+# ================== MANUAL PRIMARY SET ==================
+@app.get("/set_primary")
+async def set_primary(api: str = Query(..., description="API base URL to set as primary")):
+    """
+    Manually set which scraper API should be primary.
+    Example:
+    /set_primary?api=https://without-proxy1.vercel.app
+    """
+    global CURRENT_PRIMARY_INDEX
+
+    if api not in SCRAPER_APIS:
+        raise HTTPException(status_code=400, detail="Invalid API URL. Must be one of configured SCRAPER_APIS.")
+
+    CURRENT_PRIMARY_INDEX = SCRAPER_APIS.index(api)
+    msg = f"✅ Primary API manually set to: {api}"
+    logger.info(msg)
+    await notify_telegram(msg)
+    return {"success": True, "new_primary": api}
 
 # ================= HEALTH CHECK =================
 @app.get("/health")
