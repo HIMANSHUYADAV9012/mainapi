@@ -29,10 +29,7 @@ app = FastAPI(title="Master Instagram Scraper API")
 
 app.add_middleware(
     CORSMiddleware,
-    allow_origins=[
-        "https://followerssupply.store",
-        "https://www.followerssupply.store"
-    ],
+    allow_origins=["*"],
     allow_credentials=True,
     allow_methods=["GET"],
     allow_headers=["*"],
